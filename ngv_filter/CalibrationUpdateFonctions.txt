@@ -1,0 +1,48 @@
+def start_calibration(cam):
+    AppState.gpu_view_operations = GpuViewOperations(cam)
+    AppState.load_pickle_files()
+    AppState.application = QApplication(sys.argv)
+    AppState.application.lastWindowClosed.connect(
+        AppState.save_state_to_pickled_file)
+    window = QtWindow()
+
+    def update_calibration_1():
+        """ cette fonction doit etre appeller apres window = QtWindow() dans
+            la function start_calibration(cam) une seul fois
+
+            ** FAIRE UN BACKUP DE APPSTATE AVANT l'UPDATE ** """
+        file_path = os.path.abspath('Update1Calibration.pkl')
+        if not os.path.exists(file_path):
+            return
+
+        print 'loading elements calibration update... ({})'.format(file_path)
+        pkl_file = open(file_path, 'rb')
+        calibration_update = cPickle.load(pkl_file)
+        pkl_file.close()
+
+        for index in xrange(len(AppState.elements)):
+            AppState.elements[index]['RelativeDistance'] = \
+                calibration_update[index]['RelativeDistance']
+
+    def save_update_calibration1():
+        """ cette fonction est appeller quand je veux serialiser la nouvelle
+            calibration des elements"""
+        file_path = os.path.abspath('Update1Calibration.pkl')
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+        pkl_file = open(file_path, 'wb')
+        cPickle.dump(AppState.elements, pkl_file, -1)
+        pkl_file.close()
+
+
+    ##save_update_calibration1() (utiliser seulement par simon)
+
+    update_calibration_1()
+
+    #test_trigo()
+    #from ngv_filter import NGVStructure
+    #for e in NGVStructure.create_ordered_structure(AppState.elements):
+    #    print e
+
+    sys.exit(AppState.application.exec_())

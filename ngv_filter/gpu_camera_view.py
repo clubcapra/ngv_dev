@@ -1,3 +1,5 @@
+#!/usr/bin/python2.7 
+# coding:utf-8
 
 import cPickle
 import cv2
@@ -15,7 +17,7 @@ import os
 
 import math
 
-from ngv_filter import *
+from ngv_filter import NGVFilter, UtilityOperations
 
 
 def custom_property(func):
@@ -39,9 +41,44 @@ def nested_property(func):
     return property(**names)
 
 
-class GpuViewOperations(object):
-    def __init__(self, cam):
-        self.cam = cam
+class GpuImageView(object):
+    def __init__(self):
+        self.__img = None
+
+    @nested_property
+    def image():
+        def fget(self):
+            return self.__img
+
+        def fset(self, value=None):
+            self.__img = cv2.cvtColor(value, cv2.COLOR_RGB2BGR)
+
+        def fdel(self):
+            self.__img = None
+        return locals()
+
+    @property
+    def raw_view(self):
+        if self.__img is None:
+            return None
+        return UtilityOperations.crop_to_720p(self.__img)
+
+    @property
+    def qt_raw_view(self):
+        if self.__img is None:
+            return None
+        return UtilityOperations.convert_np_image_to_qt_image(self.__img)
+
+    @property
+    def qt_element_view(self):
+        if self.__img is None:
+            return None
+        return UtilityOperations.convert_np_image_to_qt_elements(self.__img)
+
+
+class GpuCameraView(object):
+    def __init__(self):
+        self.cam = camera.Camera()
         try:
             self.__camera_running = True
             self.cam.start()
@@ -49,59 +86,32 @@ class GpuViewOperations(object):
         except RuntimeError:
             self.__camera_running = False
         self.__black_view = np.zeros((720, 1280, 3), dtype=np.uint8)
-        self.__image = None
 
-    def __get_next_frame(self):
-        if AppState.properties['CalibrationActions']['ShowImageView']:
-            return self.__image
-        elif self.__camera_running:
-            return self.frames[self.cam.getFrame()]
-        else:
+    def raw_view(self):
+        if not self.__camera_running:
             return self.__black_view
+        return UtilityOperations.crop_to_720p(self.frames[self.cam.getFrame()])
 
-    def load_image(self, image):
-        self.__image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
-    @property
-    def camera_object(self):
-        return self.cam
-
-    __show_classification_result = False
-
-    @property
-    def qt_elements(self):
-        def show_weighted_result(np_arr):
-            count = 0
-            for e in np_arr:
-                print count, e
-                count += 1
-
-        from ngv_filter import NGVFilter, UtilityOperations
-        if AppState.properties['ElementViews']['ShowFilteredElements']:
-            if AppState.properties['FilterCalibration'][
-                    'ShowWeightedClassification']:
-                img = self.__get_next_frame()
-                if GpuViewOperations.__show_classification_result:
-                    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    show_weighted_result(
-                        NGVFilter.elements_weighted_classification(rgb))
-                    GpuViewOperations. __show_classification_result = False
-                return UtilityOperations.qt_elements_classification(img)
-            else:
-                return UtilityOperations.qt_elements_filtering(
-                    self.__get_next_frame())
-        else:
-            return UtilityOperations.convert_np_image_to_qt_elements(
-                self.__get_next_frame())
-
-    @property
-    def qt_image(self):
-        if AppState.properties['ElementViews']['ShowFilteredElements']:
-            return UtilityOperations.qt_image_filtering(
-                self.__get_next_frame())
-        else:
+    def qt_raw_view(self):
+        if not self.__camera_running:
             return UtilityOperations.convert_np_image_to_qt_image(
-                self.__get_next_frame())
+                self.__black_view)
+        return UtilityOperations.convert_np_image_to_qt_image(
+            self.frames[self.cam.getFrame()])
+
+    def element_view(self):
+        pass
+
+    def qt_element_view(self):
+        if not self.__camera_running:
+            return UtilityOperations.convert_np_image_to_qt_elements(
+                self.__black_view)
+        return UtilityOperations.convert_np_image_to_qt_elements(
+            self.frames[self.cam.getFrame()])
+
+    def __camera_frame(self):
+        pass
+
 
 COLORS = {
     'window_bg_color': QColor("#242424"),
@@ -143,73 +153,6 @@ CROP_WIDTH, CROP_HEIGHT = 20, 20
 ROW_COUNT = HEIGHT / CROP_HEIGHT
 COL_COUNT = WIDTH / CROP_WIDTH
 
-import math
-
-def test_trigo():
-    """      #5 1999
-            #24 1509
-            #26 1117
-            #29 798
-            #30 525
-            #31 405
-            #33 483
-            #38 841
-            #39 344
-            #40 691
-            #41 933
-            #43 2048
-    """
-
-    ids = ((5, 1999.0), (24, 1509.0), (26, 1117.0), (29, 798.0), (30, 525.0),
-           (31, 405.0), (33, 483.0), (38, 841.0), (39, 344.0), (40, 691.0),
-           (41, 933.0), (43, 2048.0))
-
-    rad_90 = op.truediv(math.pi, 2)
-
-    measured = [(AppState.elements[j], j)
-                for j in xrange(len(AppState.elements))
-                if AppState.elements[j]['Type'] == 1]
-
-    c_h = AppState.properties['MappingCalibration']['CameraHeight']
-    c_cam_angle = AppState.properties['MappingCalibration']['CameraAngle']
-    print 'Mapping Calibration:\n' \
-          'CameraHeight: {} mm | CameraAngle: {} degree\n'.format(
-          c_h, c_cam_angle)
-
-    m_h = AppState.properties['RealWorldCalibration']['CameraHeight']
-    m_cam_angle = AppState.properties['RealWorldCalibration']['CameraDegreeAngle']
-    print 'Real-World Calibration:\n' \
-          'CameraHeight: {} mm | CameraAngle: {} degree\n'.format(
-          m_h, m_cam_angle)
-
-    print 'Measured Elements:\n'
-    for e_, id_ in measured:
-
-        c_sigma = e_['RelativeDegree']
-        c_d = e_['RelativeDistance']
-        m_d = e_['RealWorldDistance']
-
-        c_id = [_i[0] for _i in ids if _i[1] == m_d]
-
-        c_alpha = rad_90 - math.atan(op.truediv(c_h, c_d))
-        m_alpha = rad_90 - math.atan(op.truediv(m_h, m_d))
-
-        estimated = math.tan(c_alpha) * m_h
-
-        print '{}[{}]'.format(c_id, id_)
-        print '[Calibration]\tDistance: {} mm | Height: {} mm |' \
-              ' Estimated Alpha: {} rad'.format(
-              c_d, c_h, c_alpha)
-        print '[Measured]\tDistance: {} mm | Height: {} mm |' \
-              ' Estimated Alpha: {} rad'.format(
-              m_d, m_h, m_alpha)
-        print '[Estimated Distance {}] [Error: {}]'.format(
-            estimated, 1.0 - (estimated / m_d))
-        print '[Calibrated Angle {}] [Error: {}]'.format(
-            c_alpha, 1.0 - (c_alpha / m_alpha))
-
-        print ''
-
 
 class AppState(object):
 
@@ -226,7 +169,6 @@ class AppState(object):
     ai_calibration_file_name = 'ai_calibration.pkl'
 
     main_window = None
-    application = None
 
     elements = [
         {'NumpyBuffer': None,       # Element Image Buffer
@@ -244,7 +186,6 @@ class AppState(object):
 
     properties = {
         'FilterCalibration': {
-            'ShowWeightedClassification': False,
             'Minimized': True,
             'MinValue': 0,
             'MinBlue': 0,
@@ -271,12 +212,6 @@ class AppState(object):
 
                       'Not Processed': 3}       # irrelevant elements that
                                                 # should not be processed
-        },
-        'MappingCalibration': {
-            'Minimized': True,
-            'Locked': True,
-            'CameraAngle': 0,
-            'CameraHeight': 0
         },
         'RealWorldCalibration': {
             'Minimized': True,
@@ -312,7 +247,8 @@ class AppState(object):
     angle_input_validation = QDoubleValidator(0.0, 360.0, 6, None)
     angle_input_validation.setNotation(QDoubleValidator.StandardNotation)
 
-    gpu_view_operations = None
+    gpu_image_view = GpuImageView()
+    gpu_camera_view = GpuCameraView()
 
     @staticmethod
     def load_pickle_files():
@@ -339,11 +275,10 @@ class AppState(object):
                     break
 
                 for p_k in properties[property_key].keys():
-
                     if p_k not in AppState.properties[property_key].keys():
-                        print p_k
                         compatible = False
                         break
+
             return compatible
 
         dir_path = AppState.application_saved_state_path
@@ -369,58 +304,16 @@ class AppState(object):
 
         for k, v in AppState.properties.items():
             for key in v:
-                try:
-                    if key in AppState.properties[k].keys() \
-                            and key in state['properties'][k].keys():
-                        AppState.properties[k][key] = state[
-                            'properties'][k][key]
-                except KeyError:
-                    print 'Property [\'{}\'][\'{}\'] not in saved state'.format(
-                        key, k)
+                if key in AppState.properties[k].keys() \
+                        and key in state['properties'][k].keys():
+                    AppState.properties[k][key] = state['properties'][k][key]
 
         f = AppState.properties['CalibrationActions']['LoadedImageViewPath']
         if f is not None and os.path.exists(f):
-            AppState.gpu_view_operations.load_image(
-                cv2.cvtColor(cv2.imread(f), cv2.COLOR_BGR2RGB))
+            AppState.gpu_image_view.image = AppState.gpu_image_view.image = \
+                cv2.cvtColor(cv2.imread(f), cv2.COLOR_BGR2RGB)
 
-        AppState.FilterCalibration.update_filter_parameters()
         AppState.ElementViews.update_displayed_elements_set()
-
-        from ngv_filter import NGVFilter, FILTER_CONFIGURATION_FILE
-        NGVFilter.load_filter_configurations_from_file(
-            FILTER_CONFIGURATION_FILE)
-
-    @staticmethod
-    def update_element_real_world_distance(index=None):
-        def compute_distance(calibration_height, calibration_distance,
-                             measured_height):
-            # tan( pi/2 - arctan(hc/dc) ) * mh
-            return math.tan(
-                op.truediv(math.pi, 2) - math.atan(
-                    op.truediv(calibration_height, calibration_distance))) \
-                * measured_height \
-                if calibration_distance != 0.0 else 0.0
-
-        if index is not None:
-            e = AppState.elements[index]
-            e['RealWorldDistance'] = compute_distance(
-                AppState.properties['MappingCalibration']['CameraHeight'],
-                e['RelativeDistance'],
-                AppState.properties['RealWorldCalibration']['CameraHeight'])
-            if index == AppState.selected_element_index:
-                AppState.CameraCalibration.measured_distance_input.setText(
-                    str(e['RealWorldDistance']))
-        else:
-            c_h = AppState.properties['MappingCalibration']['CameraHeight']
-            m_h = AppState.properties['RealWorldCalibration']['CameraHeight']
-            count = 0
-            for e in AppState.elements:
-                e['RealWorldDistance'] = compute_distance(
-                    c_h, e['RelativeDistance'], m_h)
-                if count == AppState.selected_element_index:
-                    AppState.CameraCalibration.measured_distance_input.setText(
-                        str(e['RealWorldDistance']))
-                count += 1
 
     @staticmethod
     @PySide.QtCore.Slot()
@@ -446,10 +339,6 @@ class AppState(object):
             'properties': AppState.properties
         }
 
-        from ngv_filter import NGVFilter, FILTER_CONFIGURATION_FILE
-        NGVFilter.save_filter_configurations_to_file(
-            FILTER_CONFIGURATION_FILE)
-
         pkl_file = open(file_path, 'wb')
         cPickle.dump(state, pkl_file, -1)
         pkl_file.close()
@@ -457,88 +346,58 @@ class AppState(object):
     class FilterCalibration(object):
 
         @staticmethod
-        def update_filter_parameters():
-            from ngv_filter import NGVFilter, UtilityOperations
-            params = AppState.properties['FilterCalibration']
-            NGVFilter.update_configurations(
-                op.truediv(params['ThresholdValue'], 100),
-                params['MinValue'], params['MinBlue'], params['MaxBlue'],
-                params['MinBlueGreenDiff'], params['MaxBlueGreenDiff'],
-                params['MinGreenRedDiff'], params['MaxGreenRedDiff'])
-            UtilityOperations.qt_image_filtering(
-                cv2.imread(os.path.abspath('test.png')))
-
-        @staticmethod
-        @PySide.QtCore.Slot(int)
-        def show_weighted_classification(state):
-            if state is 0:
-                AppState.properties['FilterCalibration'][
-                    'ShowWeightedClassification'] = False
-            else:
-                AppState.properties['FilterCalibration'][
-                    'ShowWeightedClassification'] = True
-        show_weighted_classification_checkbox = None
-
-        @staticmethod
         @PySide.QtCore.Slot()
         def minimized():
             AppState.properties['FilterCalibration']['Minimized'] = \
                 not AppState.properties['FilterCalibration']['Minimized']
+            print 'filter calibration minimized'
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def min_value_changed(value):
             AppState.properties['FilterCalibration']['MinValue'] = value
-            AppState.FilterCalibration.update_filter_parameters()
         minimum_value_slider = None
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def min_blue_changed(value):
             AppState.properties['FilterCalibration']['MinBlue'] = value
-            AppState.FilterCalibration.update_filter_parameters()
         minimum_blue_slider = None
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def max_blue_changed(value):
             AppState.properties['FilterCalibration']['MaxBlue'] = value
-            AppState.FilterCalibration.update_filter_parameters()
         maximum_blue_slider = None
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def min_blue_green_diff_changed(value):
             AppState.properties['FilterCalibration']['MinBlueGreenDiff'] = value
-            AppState.FilterCalibration.update_filter_parameters()
         minimum_blue_green_diff_slider = None
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def max_blue_green_diff_changed(value):
             AppState.properties['FilterCalibration']['MaxBlueGreenDiff'] = value
-            AppState.FilterCalibration.update_filter_parameters()
         maximum_blue_green_diff_slider = None
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def min_green_red_diff_changed(value):
             AppState.properties['FilterCalibration']['MinGreenRedDiff'] = value
-            AppState.FilterCalibration.update_filter_parameters()
         minimum_green_red_diff_slider = None
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def max_green_red_diff_changed(value):
             AppState.properties['FilterCalibration']['MaxGreenRedDiff'] = value
-            AppState.FilterCalibration.update_filter_parameters()
         maximum_green_red_diff_slider = None
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def threshold_changed(value):
             AppState.properties['FilterCalibration']['ThresholdValue'] = value
-            AppState.FilterCalibration.update_filter_parameters()
         classification_threshold_slider = None
 
     class CameraCalibration(object):
@@ -556,6 +415,7 @@ class AppState(object):
         def minimized():
             AppState.properties['CameraCalibration']['Minimized'] = \
                 not AppState.properties['CameraCalibration']['Minimized']
+            print 'Camera calibration minimized'
 
         @staticmethod
         @PySide.QtCore.Slot()
@@ -567,24 +427,24 @@ class AppState(object):
                 AppState.CameraCalibration.lock_button.setText('Unlock')
                 AppState.CameraCalibration.distance_input.setReadOnly(False)
                 AppState.CameraCalibration.angle_input.setReadOnly(False)
-                #AppState.CameraCalibration.measured_distance_input.setReadOnly(
-                #    False)
+                AppState.CameraCalibration.measured_distance_input.setReadOnly(
+                    False)
             else:
                 AppState.CameraCalibration.lock_button.setText('Lock')
                 AppState.CameraCalibration.distance_input.setReadOnly(True)
                 AppState.CameraCalibration.angle_input.setReadOnly(True)
-                #if AppState.CameraCalibration.__is_selected_element_measured():
-                #    AppState.CameraCalibration.measured_distance_input.\
-                #        setReadOnly(True)
+                if AppState.CameraCalibration.__is_selected_element_measured():
+                    AppState.CameraCalibration.measured_distance_input.\
+                        setReadOnly(True)
         lock_button = None
 
         @staticmethod
         @PySide.QtCore.Slot(int)
         def type_selected(index):
             AppState.elements[AppState.selected_element_index]['Type'] = index
-            #if AppState.CameraCalibration.__is_selected_element_measured():
-            #        AppState.CameraCalibration.measured_distance_input.\
-            #            setReadOnly(True)
+            if AppState.CameraCalibration.__is_selected_element_measured():
+                    AppState.CameraCalibration.measured_distance_input.\
+                        setReadOnly(True)
             AppState.ElementViews.update_displayed_elements_set()
         type_combobox = None
 
@@ -592,9 +452,7 @@ class AppState(object):
         @PySide.QtCore.Slot(str)
         def distance_from_rf(text):
             AppState.elements[AppState.selected_element_index][
-                'RelativeDistance'] = float(text) if text else 0.0
-            AppState.update_element_real_world_distance(
-                AppState.selected_element_index)
+                'RelativeDistance'] = float(text)
         distance_input = None
 
         @staticmethod
@@ -615,7 +473,7 @@ class AppState(object):
         @PySide.QtCore.Slot(str)
         def measured_distance_from_rf(text):
             AppState.elements[AppState.selected_element_index][
-                'RealWorldDistance'] = float(text) if text else 0.0
+                'RealWorldDistance'] = float(text)
         measured_distance_input = None
 
         @staticmethod
@@ -630,48 +488,8 @@ class AppState(object):
             index = AppState.selected_element_index
             x = index % COL_COUNT + 1
             y = index / COL_COUNT + 1
-            l.setText('<center><font size=4>index: <b>{}</b><br />'
-                      'row: {} col: {}</font></center>'.format(
-                      AppState.selected_element_index, x, y))
+            l.setText('<font size=4>X: {} Y: {}</font>'.format(x, y))
         element_coordinate_label = None
-
-    class MappingCalibration(object):
-
-        @staticmethod
-        @PySide.QtCore.Slot()
-        def minimized():
-            AppState.properties['MappingCalibration']['Minimized'] = \
-                not AppState.properties['MappingCalibration']['Minimized']
-
-        @staticmethod
-        @PySide.QtCore.Slot()
-        def lock_unlock():
-            AppState.properties['MappingCalibration']['Locked'] \
-                = not AppState.properties['MappingCalibration']['Locked']
-            if AppState.properties['MappingCalibration']['Locked']:
-                AppState.MappingCalibration.lock_button.setText('Unlock')
-                AppState.MappingCalibration.angle_input.setReadOnly(True)
-                AppState.MappingCalibration.height_input.setReadOnly(True)
-            else:
-                AppState.MappingCalibration.lock_button.setText('Lock')
-                AppState.MappingCalibration.angle_input.setReadOnly(False)
-                AppState.MappingCalibration.height_input.setReadOnly(False)
-        lock_button = None
-
-        @staticmethod
-        @PySide.QtCore.Slot(str)
-        def camera_angle(text):
-            AppState.properties['MappingCalibration']['CameraAngle'] \
-                = float(text) if text else 0.0
-        angle_input = None
-
-        @staticmethod
-        @PySide.QtCore.Slot(str)
-        def camera_height(text):
-            AppState.properties['MappingCalibration']['CameraHeight'] \
-                = float(text) if text else 0.0
-            AppState.update_element_real_world_distance()
-        height_input = None
 
     class RealWorldCalibration(object):
 
@@ -680,6 +498,7 @@ class AppState(object):
         def minimized():
             AppState.properties['RealWorldCalibration']['Minimized'] = \
                 not AppState.properties['RealWorldCalibration']['Minimized']
+            print 'Real world calibration minimized'
 
         @staticmethod
         @PySide.QtCore.Slot()
@@ -705,7 +524,7 @@ class AppState(object):
             def degree_to_radian(degree_val):
                 return op.mul(degree_val, op.truediv(math.pi, 180))
 
-            degree = float(text) if text else 0.0
+            degree = float(text)
             AppState.properties['RealWorldCalibration']['CameraDegreeAngle'] \
                 = degree
 
@@ -717,15 +536,14 @@ class AppState(object):
         @PySide.QtCore.Slot(str)
         def camera_height(text):
             AppState.properties['RealWorldCalibration']['CameraHeight'] \
-                = float(text) if text else 0.0
-            AppState.update_element_real_world_distance()
+                = float(text)
         height_input = None
 
         @staticmethod
         @PySide.QtCore.Slot(str)
         def camera_distance_from_rf(text):
             AppState.properties['RealWorldCalibration'][
-                'CameraRangeFinderDistance'] = float(text) if text else 0.0
+                'CameraRangeFinderDistance'] = float(text)
         distance_input = None
 
     class CameraConfiguration(object):
@@ -735,26 +553,24 @@ class AppState(object):
         def minimized():
             AppState.properties['CameraConfiguration']['Minimized'] = \
                 not AppState.properties['CameraConfiguration']['Minimized']
+            print 'Camera Configuration minimized'
 
         @staticmethod
         @PySide.QtCore.Slot()
         def adjust_exposure():
-            AppState.gpu_view_operations.camera_object.setExposureMode(
-                camera.ExposureMode.AutoOnce)
+            print 'camera configuration adjust exposure'
         exposure_button = None
 
         @staticmethod
         @PySide.QtCore.Slot()
         def adjust_gain():
-            AppState.gpu_view_operations.camera_object.setGainMode(
-                camera.GainMode.AutoOnce)
+            print 'camera configuration adjust gain'
         gain_button = None
 
         @staticmethod
         @PySide.QtCore.Slot()
         def adjust_white_balance():
-            AppState.gpu_view_operations.camera_object.setWhitebalMode(
-                camera.WhitebalMode.AutoOnce)
+            print 'camera configuration adjust white balance'
         white_balance_button = None
 
     class ElementViews(object):
@@ -878,6 +694,7 @@ class AppState(object):
         def minimized():
             AppState.properties['CalibrationActions']['Minimized'] = \
                 not AppState.properties['CalibrationActions']['Minimized']
+            print 'Calibration Actions minimized'
 
         @staticmethod
         @PySide.QtCore.Slot()
@@ -913,13 +730,10 @@ class AppState(object):
         @PySide.QtCore.Slot()
         def load_view_from_image():
             f = str(QFileDialog.getOpenFileName()[0])
-            if f:
-                AppState.gpu_view_operations.load_image(cv2.cvtColor(
-                    cv2.imread(f), cv2.COLOR_BGR2RGB))
-                AppState.properties['CalibrationActions'][
-                    'LoadedImageViewPath'] = f
-                AppState.properties['CalibrationActions'][
-                    'ShowImageView'] = True
+            AppState.gpu_image_view.image = cv2.cvtColor(
+                cv2.imread(f), cv2.COLOR_BGR2RGB)
+            AppState.properties['CalibrationActions']['LoadedImageViewPath'] = f
+            AppState.properties['CalibrationActions']['ShowImageView'] = True
         load_view_from_image_button = None
 
         @staticmethod
@@ -931,10 +745,7 @@ class AppState(object):
         @staticmethod
         @PySide.QtCore.Slot()
         def export_slam_calibration():
-            f = str(QFileDialog.getSaveFileName()[0])
-            if f:
-                from ngv_filter import NGVFilter
-                NGVFilter.save_elements_structure(f, AppState.elements)
+            print 'export SLAM calibration'
         export_slam_calibration_button = None
 
         @staticmethod
@@ -984,7 +795,7 @@ class QtWindow(QWidget):
 
             def mousePressEvent(self, e):
                 ##mouse left event Qpoint Point mouse right  event
-                #print e.button()
+                print e.button()
                 self.__color = self.__m_pressed_color
                 self.repaint()
 
@@ -1020,6 +831,7 @@ class QtWindow(QWidget):
 
         def __init__(self, selected_element_function):
             super(QtWindow.CameraWidget, self).__init__()
+            #self.__cam_view = GpuCameraView()
             self.__elements = []
             self.__selected_element_f = selected_element_function
 
@@ -1053,7 +865,11 @@ class QtWindow(QWidget):
                 count += 1
 
         def refresh_camera_widget(self):
-            element_views = AppState.gpu_view_operations.qt_elements
+            if AppState.properties['CalibrationActions']['ShowImageView']:
+                element_views = AppState.gpu_image_view.qt_element_view
+            else:
+                element_views = AppState.gpu_camera_view.qt_element_view()
+
             #t = timeit.default_timer()
             for i in xrange(len(self.__elements)):
                 element = self.__elements[i]
@@ -1233,22 +1049,6 @@ class QtWindow(QWidget):
 
                     grid = QGridLayout()
                     #
-                    # QCheckBox + QLabel -> Show Weighted Classification
-                    cb = AppState.FilterCalibration.\
-                        show_weighted_classification_checkbox = QCheckBox()
-                    cb.stateChanged.connect(AppState.FilterCalibration.
-                                            show_weighted_classification)
-                    if AppState.properties['FilterCalibration'][
-                            'ShowWeightedClassification']:
-                        cb.setCheckState(Qt.Checked)
-                    else:
-                        cb.setCheckState(Qt.Unchecked)
-                    grid.addWidget(cb, 0, 0)
-
-                    lbl = QLabel('<font size=2>Show<br />'
-                                 'Binary<br />Classification</font>')
-                    grid.addWidget(lbl, 0, 0, alignment=3)
-                    #
                     # QSlider -> Classification Threshold Value
                     label = QLabel('<center><font size=2>'
                                    'Classification<br>Threshold'
@@ -1264,7 +1064,7 @@ class QtWindow(QWidget):
                     slider.valueChanged[int].connect(
                         AppState.FilterCalibration.threshold_changed)
 
-                    grid.addWidget(create_frame(label, slider), 1, 0)
+                    grid.addWidget(create_frame(label, slider), 0, 0)
                     #
                     # QLabel + QSlider -> Minimum Channel Value
                     label = QLabel('<center><font size=2>'
@@ -1280,7 +1080,7 @@ class QtWindow(QWidget):
                     slider.valueChanged[int].connect(
                         AppState.FilterCalibration.min_value_changed)
 
-                    grid.addWidget(create_frame(label, slider), 1, 1)
+                    grid.addWidget(create_frame(label, slider), 0, 1)
                     #
                     # QLabel + QSlider -> Minimum Blue Value
                     label = QLabel('<center><font size=2>'
@@ -1296,7 +1096,7 @@ class QtWindow(QWidget):
                     slider.valueChanged[int].connect(
                         AppState.FilterCalibration.min_blue_changed)
 
-                    grid.addWidget(create_frame(label, slider), 2, 0)
+                    grid.addWidget(create_frame(label, slider), 1, 0)
                     #
                     # QLabel + QSlider -> Maximum Blue Value
                     label = QLabel('<center><font size=2>'
@@ -1312,7 +1112,7 @@ class QtWindow(QWidget):
                     slider.valueChanged[int].connect(
                         AppState.FilterCalibration.max_blue_changed)
 
-                    grid.addWidget(create_frame(label, slider), 2, 1)
+                    grid.addWidget(create_frame(label, slider), 1, 1)
                     #
                     # QLabel + QSlider -> Minimum Blue Green Difference Value
                     label = QLabel('<center><font size=2>'
@@ -1329,7 +1129,7 @@ class QtWindow(QWidget):
                     slider.valueChanged[int].connect(
                         AppState.FilterCalibration.min_blue_green_diff_changed)
 
-                    grid.addWidget(create_frame(label, slider), 3, 0)
+                    grid.addWidget(create_frame(label, slider), 2, 0)
                     #
                     # QLabel + QSlider -> Maximum Blue Green Difference Value
                     label = QLabel('<center><font size=2>'
@@ -1346,7 +1146,7 @@ class QtWindow(QWidget):
                     slider.valueChanged[int].connect(
                         AppState.FilterCalibration.max_blue_green_diff_changed)
 
-                    grid.addWidget(create_frame(label, slider), 3, 1)
+                    grid.addWidget(create_frame(label, slider), 2, 1)
                     #
                     # QLabel + QSlider -> Minimum Green Red Difference Value
                     label = QLabel('<center><font size=2>'
@@ -1363,7 +1163,7 @@ class QtWindow(QWidget):
                     slider.valueChanged[int].connect(
                         AppState.FilterCalibration.min_green_red_diff_changed)
 
-                    grid.addWidget(create_frame(label, slider), 4, 0)
+                    grid.addWidget(create_frame(label, slider), 3, 0)
                     #
                     # QLabel + QSlider -> Minimum Green Red Difference Value
                     label = QLabel('<center><font size=2>'
@@ -1380,7 +1180,7 @@ class QtWindow(QWidget):
                     slider.valueChanged[int].connect(
                         AppState.FilterCalibration.max_green_red_diff_changed)
 
-                    grid.addWidget(create_frame(label, slider), 4, 1)
+                    grid.addWidget(create_frame(label, slider), 3, 1)
 
                     grid.setHorizontalSpacing(1)
                     grid.setVerticalSpacing(1)
@@ -1436,12 +1236,11 @@ class QtWindow(QWidget):
                     #
                     # QPushButton -> Camera Mapping Calibration
                     #                Lock/Unlock with confirmation
-                    #b = AppState.CameraCalibration.lock_button = \
-                    #    QPushButton('Unlock' if AppState.properties[
-                    #        'CameraCalibration']['Locked'] else 'Lock')
-                    #b.pressed.connect(AppState.CameraCalibration.lock_unlock)
+                    b = AppState.CameraCalibration.lock_button = \
+                        QPushButton("Unlock")
+                    b.pressed.connect(AppState.CameraCalibration.lock_unlock)
 
-                    #grid.addWidget(b, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
                     #
                     # QComboBox Types -> Computed Element, RangeFinder,
                     #                    Not Processed, Measured Element
@@ -1512,10 +1311,7 @@ class QtWindow(QWidget):
                     # (Locked is element is a not a measured element)
                     le = AppState.CameraCalibration.measured_distance_input = \
                         QLineEdit()
-                    le.textChanged.connect(
-                        AppState.CameraCalibration.measured_distance_from_rf)
-                    le.setReadOnly(AppState.elements[
-                        AppState.selected_element_index]['Type'] != 1)
+                    le.setReadOnly(True)
                     le.setValidator(AppState.distance_input_validation)
                     le.setMaximumWidth(120)
 
@@ -1569,73 +1365,6 @@ class QtWindow(QWidget):
 
                     self.repaint()
 
-            class MappingCalibration(QWidget):
-                def __init__(self, parent=None):
-                    super(QtWindow.UserInputWidget.CalibrationWidget.
-                          MappingCalibration, self).__init__()
-                    grid = QGridLayout()
-                    row = PostfixIncrementable(0)
-                    grid.setColumnStretch(0, 1)
-                    #
-                    # QPushButton -> Real World Mapping calibration
-                    #                Lock/Unlock with confirmation
-                    #b = AppState.MappingCalibration.lock_button \
-                    #    = QPushButton('Unlock' if AppState.properties[
-                    #        'MappingCalibration']['Locked'] else 'Lock')
-                    #b.pressed.connect(AppState.MappingCalibration.lock_unlock)
-                    #grid.addWidget(b, row(+1), 0)
-                    #
-                    # QLabel + QInputBox -> Camera Angle (degree)
-                    le = AppState.MappingCalibration.angle_input = QLineEdit()
-                    le.textChanged.connect(
-                        AppState.MappingCalibration.camera_angle)
-                    le.setValidator(AppState.angle_input_validation)
-                    le.setMaximumWidth(70)
-                    le.setText(str(AppState.properties['MappingCalibration'][
-                        'CameraAngle']))
-
-                    iwu = QtWindow.UserInputWidget.InputWithUnit(
-                        le, '<font size=5>&deg;<font>')
-
-                    self.__angle_label = QLabel(
-                        '<font size=3><b>Camera Angle</b></font>'
-                        '<br><font size=2>from Poster:</font>')
-
-                    grid.addWidget(self.__angle_label, row(+1), 0)
-                    grid.addWidget(iwu, row(+1), 0)
-                    #
-                    # QLabel + QInputBox -> Height from ground
-                    le = AppState.MappingCalibration.height_input = QLineEdit()
-                    le.textChanged.connect(AppState.MappingCalibration.
-                                           camera_height)
-                    le.setValidator(AppState.distance_input_validation)
-                    le.setMaximumWidth(100)
-                    le.setText(str(AppState.properties['MappingCalibration'][
-                        'CameraHeight']))
-
-                    iwu = QtWindow.UserInputWidget.InputWithUnit(
-                        le, '<font size=3><b>mm</b><font>')
-
-                    self.__height_label = QLabel(
-                        '<font size=3><b>Camera Height</b></font>'
-                        '<br><font size=2>from Poster:</font>')
-
-                    grid.addWidget(self.__height_label, row(+1), 0)
-                    grid.addWidget(iwu, row(+1), 0)
-
-                    self.setLayout(grid)
-
-                    p = QPalette()
-                    p.setColor(self.backgroundRole(),
-                               COLORS['calibration_widget_bg_color'])
-                    self.setPalette(p)
-                    self.setAutoFillBackground(True)
-
-                    if AppState.properties['MappingCalibration']['Minimized']:
-                        self.setVisible(False)
-                    else:
-                        self.setVisible(True)
-
             class RealWorldCalibration(QWidget):
                 def __init__(self, parent=None):
                     super(QtWindow.UserInputWidget.CalibrationWidget.
@@ -1647,22 +1376,19 @@ class QtWindow(QWidget):
                     #
                     # QPushButton -> Real World Mapping calibration
                     #                Lock/Unlock with confirmation
-                    #b = AppState.RealWorldCalibration.lock_button = \
-                    #    QPushButton('Unlock' if AppState.properties[
-                    #        'RealWorldCalibration']['Locked'] else 'Lock')
-                    #b.pressed.connect(AppState.RealWorldCalibration.lock_unlock)
+                    b = AppState.RealWorldCalibration.lock_button = \
+                        QPushButton("Unlock")
+                    b.pressed.connect(AppState.RealWorldCalibration.lock_unlock)
 
-                    #grid.addWidget(b, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
                     #
-                    # QLabel + QInputBox -> Camera Angle (degree)
+                    # QLabel + QInputBox -> Camera Angle (degree
                     le = AppState.RealWorldCalibration.angle_input = QLineEdit()
                     le.textChanged.connect(AppState.RealWorldCalibration.
                                            cam_angle)
+
                     le.setValidator(AppState.angle_input_validation)
                     le.setMaximumWidth(70)
-                    le.setText(str(AppState.properties['RealWorldCalibration'][
-                        'CameraDegreeAngle']))
-
                     iwu = QtWindow.UserInputWidget.InputWithUnit(
                         le, '<font size=5>&deg;<font>')
 
@@ -1678,11 +1404,9 @@ class QtWindow(QWidget):
                         QLineEdit()
                     le.textChanged.connect(AppState.RealWorldCalibration.
                                            camera_height)
+
                     le.setValidator(AppState.distance_input_validation)
                     le.setMaximumWidth(100)
-                    le.setText(str(AppState.properties['RealWorldCalibration'][
-                        'CameraHeight']))
-
                     iwu = QtWindow.UserInputWidget.InputWithUnit(
                         le, '<font size=3><b>mm</b><font>')
 
@@ -1694,24 +1418,22 @@ class QtWindow(QWidget):
                     grid.addWidget(iwu, row(+1), 0)
                     #
                     # QLabel + QInputBox -> distance from Range Finder
-                    #le = AppState.RealWorldCalibration.distance_input =\
-                    #    QLineEdit()
-                    #le.textChanged.connect(AppState.RealWorldCalibration.
-                    #                       camera_distance_from_rf)
-                    #le.setValidator(AppState.distance_input_validation)
-                    #le.setMaximumWidth(100)
-                    #le.setText(str(AppState.properties['RealWorldCalibration'][
-                    #    'CameraRangeFinderDistance']))
+                    le = AppState.RealWorldCalibration.distance_input =\
+                        QLineEdit()
+                    le.textChanged.connect(AppState.RealWorldCalibration.
+                                           camera_distance_from_rf)
 
-                    #iwu = QtWindow.UserInputWidget.InputWithUnit(
-                    #    le, '<font size=3><b>mm</b><font>')
+                    le.setValidator(AppState.distance_input_validation)
+                    le.setMaximumWidth(100)
+                    iwu = QtWindow.UserInputWidget.InputWithUnit(
+                        le, '<font size=3><b>mm</b><font>')
 
-                    #self.__cam_rf_distance_label = QLabel(
-                    #    '<font size=3><b>Camera Ground Distance</b></font>'
-                    #    '<br><font size=2>from Range Finder:</font>')
+                    self.__cam_rf_distance_label = QLabel(
+                        '<font size=3><b>Camera Ground Distance</b></font>'
+                        '<br><font size=2>from Range Finder:</font>')
 
-                    #grid.addWidget(self.__cam_rf_distance_label, row(+1), 0)
-                    #grid.addWidget(iwu, row(+1), 0)
+                    grid.addWidget(self.__cam_rf_distance_label, row(+1), 0)
+                    grid.addWidget(iwu, row(+1), 0)
 
                     self.setLayout(grid)
 
@@ -1776,31 +1498,33 @@ class QtWindow(QWidget):
                     super(QtWindow.UserInputWidget.CalibrationWidget.
                           ElementViews, self).__init__()
 
+
+
                     grid = QGridLayout()
                     row = PostfixIncrementable(0)
                     #
                     # QCheckBox -> Freeze Camera View
-                    #cb = AppState.ElementViews.freeze_cam_checkbox = QCheckBox(
-                    #    'Freeze Camera View')
-                    #cb.stateChanged.connect(AppState.ElementViews.
-                    #                        freeze_camera_view)
-                    #if AppState.properties['ElementViews']['FreezeCameraView']:
-                    #    cb.setCheckState(Qt.Checked)
-                    #else:
-                    #    cb.setCheckState(Qt.Unchecked)
-                    #grid.addWidget(cb, row(+1), 0)
+                    cb = AppState.ElementViews.freeze_cam_checkbox = QCheckBox(
+                        'Freeze Camera View')
+                    cb.stateChanged.connect(AppState.ElementViews.
+                                            freeze_camera_view)
+                    if AppState.properties['ElementViews']['FreezeCameraView']:
+                        cb.setCheckState(Qt.Checked)
+                    else:
+                        cb.setCheckState(Qt.Unchecked)
+                    grid.addWidget(cb, row(+1), 0)
                     #
                     # JCheckedButton -> View Filtered Elements
-                    cb = AppState.ElementViews.filtered_elements_checkbox = \
+                    b = AppState.ElementViews.filtered_elements_checkbox = \
                         QCheckBox('Show Filtered\nElements')
-                    cb.stateChanged.connect(AppState.ElementViews.
-                                            show_filtered_elements)
+                    b.stateChanged.connect(AppState.ElementViews.
+                                           show_filtered_elements)
                     if AppState.properties['ElementViews'][
                             'ShowFilteredElements']:
                         cb.setCheckState(Qt.Checked)
                     else:
                         cb.setCheckState(Qt.Unchecked)
-                    grid.addWidget(cb, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
                     #
                     # JCheckedButton -> View Measured Elements
                     cb = AppState.ElementViews.\
@@ -1888,37 +1612,37 @@ class QtWindow(QWidget):
                     row = PostfixIncrementable(0)
                     #
                     # QPushButton -> New Calibration
-                    #b = AppState.CalibrationActions.new_calibration_button = \
-                    #    QPushButton('New Calibration')
-                    #b.pressed.connect(AppState.CalibrationActions.
-                    #                  new_calibration)
+                    b = AppState.CalibrationActions.new_calibration_button = \
+                        QPushButton('New Calibration')
+                    b.pressed.connect(AppState.CalibrationActions.
+                                      new_calibration)
 
-                    #grid.addWidget(b, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
                     #
                     # QPushButton -> Save Calibration
-                    #b = AppState.CalibrationActions.save_calibration_button = \
-                    #    QPushButton('Save Calibration')
-                    #b.pressed.connect(AppState.CalibrationActions.
-                    #                  save_calibration)
+                    b = AppState.CalibrationActions.save_calibration_button = \
+                        QPushButton('Save Calibration')
+                    b.pressed.connect(AppState.CalibrationActions.
+                                      save_calibration)
 
-                    #grid.addWidget(b, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
                     #
                     # QPushButton -> Load Calibration
-                    #b = AppState.CalibrationActions.load_calibration_button = \
-                    #    QPushButton('Load Calibration')
-                    #b.pressed.connect(AppState.CalibrationActions.
-                    #                  load_calibration)
+                    b = AppState.CalibrationActions.load_calibration_button = \
+                        QPushButton('Load Calibration')
+                    b.pressed.connect(AppState.CalibrationActions.
+                                      load_calibration)
 
-                    #grid.addWidget(b, row(+1), 0)
-                    #grid.addItem(spacer, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
+                    grid.addItem(spacer, row(+1), 0)
                     #
                     # QPushButton -> Save View As Image
-                    #b = AppState.CalibrationActions.save_view_as_image_button =\
-                    #    QPushButton('Save View As Image')
-                    #b.pressed.connect(AppState.CalibrationActions.
-                    #                  save_view_as_image)
+                    b = AppState.CalibrationActions.save_view_as_image_button =\
+                        QPushButton('Save View As Image')
+                    b.pressed.connect(AppState.CalibrationActions.
+                                      save_view_as_image)
 
-                    #grid.addWidget(b, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
                     #
                     # QPushButton -> Load View From Camera
                     b = AppState.CalibrationActions.\
@@ -1940,13 +1664,13 @@ class QtWindow(QWidget):
                     grid.addItem(spacer, row(+1), 0)
                     #
                     # QPushButton -> Export Serialization For Binary Filter
-                    #b = AppState.CalibrationActions.\
-                    #    export_filter_calibration_button = QPushButton(
-                    #        'Export Filter Calibration')
-                    #b.pressed.connect(AppState.CalibrationActions.
-                    #                  export_filter_calibration)
+                    b = AppState.CalibrationActions.\
+                        export_filter_calibration_button = QPushButton(
+                            'Export Filter Calibration')
+                    b.pressed.connect(AppState.CalibrationActions.
+                                      export_filter_calibration)
 
-                    #grid.addWidget(b, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
                     #
                     # QPushButton -> Export Serialization For SLAM
                     b = AppState.CalibrationActions.\
@@ -1958,13 +1682,13 @@ class QtWindow(QWidget):
                     grid.addWidget(b, row(+1), 0)
                     #
                     # QPushButton -> Export Serialization For AI
-                    #b = AppState.CalibrationActions.\
-                    #    export_ai_calibration_button = QPushButton(
-                    #        'Export AI Calibration')
-                    #b.pressed.connect(AppState.CalibrationActions.
-                    #                  export_ai_calibration)
+                    b = AppState.CalibrationActions.\
+                        export_ai_calibration_button = QPushButton(
+                            'Export AI Calibration')
+                    b.pressed.connect(AppState.CalibrationActions.
+                                      export_ai_calibration)
 
-                    #grid.addWidget(b, row(+1), 0)
+                    grid.addWidget(b, row(+1), 0)
 
                     self.setLayout(grid)
 
@@ -2026,18 +1750,6 @@ class QtWindow(QWidget):
             grid.addWidget(self.__cam_calibration, 4, 0)
             grid.addItem(QSpacerItem(2, 2), 5, 0)
             #
-            # Mapping Calibration
-            self.__mapping_calibration = self.CalibrationWidget.\
-                MappingCalibration(self)
-            self.__mapping_calibration_title = self.CalibrationWidget.\
-                TitleWidget('Mapping Calibration', self.__mapping_calibration,
-                            AppState.MappingCalibration.minimized,
-                            not AppState.properties['MappingCalibration'][
-                                'Minimized'])
-            grid.addWidget(self.__mapping_calibration_title, 6, 0)
-            grid.addWidget(self.__mapping_calibration, 7, 0)
-            grid.addItem(QSpacerItem(2, 2), 8, 0)
-            #
             # Real World Calibration
             self.__real_world_calibration = self.CalibrationWidget.\
                 RealWorldCalibration(self)
@@ -2048,9 +1760,9 @@ class QtWindow(QWidget):
                             not AppState.properties['RealWorldCalibration'][
                                 'Minimized'])
 
-            grid.addWidget(self.__real_world_calibration_title, 9, 0)
-            grid.addWidget(self.__real_world_calibration, 10, 0)
-            grid.addItem(QSpacerItem(2, 2), 11, 0)
+            grid.addWidget(self.__real_world_calibration_title, 6, 0)
+            grid.addWidget(self.__real_world_calibration, 7, 0)
+            grid.addItem(QSpacerItem(2, 2), 8, 0)
             #
             # Camera Configuration
             self.__cam_configuration = self.CalibrationWidget.\
@@ -2060,9 +1772,9 @@ class QtWindow(QWidget):
                 AppState.CameraConfiguration.minimized,
                 not AppState.properties['CameraConfiguration']['Minimized'])
 
-            grid.addWidget(self.__cam_configuration_title, 12, 0)
-            grid.addWidget(self.__cam_configuration, 13, 0)
-            grid.addItem(QSpacerItem(2, 2), 14, 0)
+            grid.addWidget(self.__cam_configuration_title, 9, 0)
+            grid.addWidget(self.__cam_configuration, 10, 0)
+            grid.addItem(QSpacerItem(2, 2), 11, 0)
             #
             # Element Views
             self.__calibration_views = self.CalibrationWidget.ElementViews(self)
@@ -2071,9 +1783,9 @@ class QtWindow(QWidget):
                 AppState.ElementViews.minimized,
                 not AppState.properties['ElementViews']['Minimized'])
 
-            grid.addWidget(self.__element_views_title, 15, 0)
-            grid.addWidget(self.__calibration_views, 16, 0)
-            grid.addItem(QSpacerItem(2, 2), 17, 0)
+            grid.addWidget(self.__element_views_title, 12, 0)
+            grid.addWidget(self.__calibration_views, 13, 0)
+            grid.addItem(QSpacerItem(2, 2), 14, 0)
             #
             # Calibration Actions
             self.__calibration_actions = self.CalibrationWidget.\
@@ -2084,10 +1796,10 @@ class QtWindow(QWidget):
                             not AppState.properties['CalibrationActions'][
                                 'Minimized'])
 
-            grid.addWidget(self.__calibration_actions_title, 18, 0)
-            grid.addWidget(self.__calibration_actions, 19, 0)
+            grid.addWidget(self.__calibration_actions_title, 15, 0)
+            grid.addWidget(self.__calibration_actions, 16, 0)
 
-            grid.setRowStretch(20, 1)
+            grid.setRowStretch(17, 1)
             grid.setColumnMinimumWidth(0, 172)
             grid.setSpacing(0)
             grid.setHorizontalSpacing(0)
@@ -2166,38 +1878,14 @@ class QtWindow(QWidget):
         self.__display_timer.stop()
 
 
-def start_calibration(cam):
-    AppState.gpu_view_operations = GpuViewOperations(cam)
-    AppState.load_pickle_files()
-    AppState.application = QApplication(sys.argv)
-    AppState.application.lastWindowClosed.connect(
-        AppState.save_state_to_pickled_file)
-    window = QtWindow()
-
-    def oups():
-        for e in AppState.elements:
-            def degree_to_radian(degree_val):
-                return op.mul(degree_val, op.truediv(math.pi, 180))
-            e['RelativeDegree'] = abs(e['RelativeDegree'] - 270.0)
-            e['RelativeRadianAngle'] = degree_to_radian(e['RelativeDegree'])
-
-    oups()
-
-    from ngv_filter import NGVStructure
-    for e in NGVStructure.create_ordered_structure(AppState.elements):
-        print e
-    #test_trigo()
-    #from ngv_filter import NGVStructure
-    #for e in NGVStructure.create_ordered_structure(AppState.elements):
-    #    print e
-
-    sys.exit(AppState.application.exec_())
-
-
 def testing():
-    print 'hello world'
+    pass
 
 if __name__ == "__main__":
+    AppState.load_pickle_files()
+    app = QApplication(sys.argv)
+    app.lastWindowClosed.connect(AppState.save_state_to_pickled_file)
+    window = QtWindow()
 
-    NGVFilter.start_calibration_gui(camera.Camera())
     testing()
+    sys.exit(app.exec_())
